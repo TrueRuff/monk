@@ -66,8 +66,8 @@ export function Ring({
       <svg width={size} height={size} aria-hidden="true">
         <defs>
           <linearGradient id={id} x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor="#F0C97A" />
-            <stop offset="100%" stopColor="#C98F35" />
+            <stop offset="0%" stopColor="var(--accent-hi)" />
+            <stop offset="100%" stopColor="var(--accent-lo)" />
           </linearGradient>
         </defs>
         <circle cx={size / 2} cy={size / 2} r={r} stroke="rgba(255,255,255,0.07)" strokeWidth={stroke} fill="none" />

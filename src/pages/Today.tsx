@@ -1,9 +1,11 @@
+import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { format } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import { db, ensureCheck } from '../shared/db';
 import { MINIMUM, WEEK } from '../shared/plan';
 import { computeStreak, dateKey } from '../shared/streak';
+import { Toast } from '../shared/Toast';
 import { Btn, Card, Label, Ring } from '../shared/ui';
 
 export default function Today({
@@ -16,6 +18,7 @@ export default function Today({
   const now = new Date();
   const key = dateKey(now);
   const plan = WEEK[now.getDay()];
+  const [toast, setToast] = useState<{ text: string; undo?: () => Promise<void> } | null>(null);
 
   const check = useLiveQuery(() => db.checks.get(key), [key]);
   const all = useLiveQuery(() => db.checks.toArray(), []);
@@ -30,13 +33,44 @@ export default function Today({
   const ratio = totalSets ? doneSets / totalSets : minimum ? 1 : 0;
 
   async function markMinimum() {
-    const current = await ensureCheck(key);
-    await db.checks.put({ ...current, minimum: true });
+    if (minimum) {
+      setToast({ text: 'День уже закрыт' });
+      return;
+    }
+    const before = await ensureCheck(key);
+    await db.checks.put({ ...before, minimum: true });
+    navigator.vibrate?.(12);
+    setToast({
+      text: 'День закрыт',
+      undo: async () => {
+        await db.checks.put({ ...before, minimum: false });
+      },
+    });
   }
 
   async function addPullup() {
-    await db.sets.add({ date: key, plan: plan.type, exercise: 'Подтягивание (GTG)', setIndex: 0 });
-    await markMinimum();
+    const before = await ensureCheck(key);
+    const wasMinimum = before.minimum;
+    const id = await db.sets.add({
+      date: key,
+      plan: plan.type,
+      exercise: 'Подтягивание (GTG)',
+      setIndex: 0,
+    });
+    if (!wasMinimum) {
+      await db.checks.put({ ...before, minimum: true });
+    }
+    navigator.vibrate?.(12);
+    setToast({
+      text: 'Подтягивание записано',
+      undo: async () => {
+        await db.sets.delete(id);
+        if (!wasMinimum) {
+          const current = await ensureCheck(key);
+          await db.checks.put({ ...current, minimum: false });
+        }
+      },
+    });
   }
 
   return (
@@ -92,9 +126,7 @@ export default function Today({
             </div>
           </div>
           <Ring progress={ratio} size={64} stroke={7}>
-            <span style={{ fontSize: 15, fontWeight: 700 }}>
-              {Math.round(ratio * 100)}%
-            </span>
+            <span style={{ fontSize: 15, fontWeight: 700 }}>{Math.round(ratio * 100)}%</span>
           </Ring>
         </div>
       </Card>
@@ -116,6 +148,14 @@ export default function Today({
       </Card>
 
       <p className="hint">Правило простое: день закрыт, если сделал минимум. Не ноль — уже победа.</p>
+
+      {toast ? (
+        <Toast
+          message={toast.text}
+          onAction={toast.undo}
+          onClose={() => setToast(null)}
+        />
+      ) : null}
     </div>
   );
 }

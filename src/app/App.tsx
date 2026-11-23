@@ -5,9 +5,11 @@ import Progress from '../pages/Progress';
 import Settings from '../pages/Settings';
 import Workout from '../pages/Workout';
 import Monk from '../pages/Monk';
+import Onboarding from '../pages/Onboarding';
 import { WEEK } from '../shared/plan';
-import { getSetting } from '../shared/db';
+import { getSetting, setSetting } from '../shared/db';
 import { isNative, scheduleAll } from '../shared/notifications';
+import { applyTheme, isTheme, type Theme } from '../shared/theme';
 import type { Tab } from '../shared/types';
 
 const TABS: { id: Tab; label: string; icon: string }[] = [
@@ -17,6 +19,8 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'settings', label: 'Я', icon: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM5 21a7 7 0 0 1 14 0' },
 ];
 
+const ONBOARDED_KEY = 'monk.onboarded';
+
 const VALID_TABS: Tab[] = ['today', 'plan', 'progress', 'settings'];
 
 function initialTab(): Tab {
@@ -24,10 +28,25 @@ function initialTab(): Tab {
   return VALID_TABS.includes(hash as Tab) ? (hash as Tab) : 'today';
 }
 
+function currentTheme(): Theme {
+  const attr = document.documentElement.dataset.theme;
+  return isTheme(attr) ? attr : 'gold';
+}
+
 export default function App() {
   const [tab, setTab] = useState<Tab>(initialTab);
-  const [workout, setWorkout] = useState(false);
+  const [workout, setWorkout] = useState(() => window.location.hash === '#workout');
   const [monk, setMonk] = useState(false);
+  const [onboarded, setOnboarded] = useState(() => localStorage.getItem(ONBOARDED_KEY) === '1');
+
+  useEffect(() => {
+    void (async () => {
+      const param = new URLSearchParams(window.location.search).get('theme');
+      if (isTheme(param)) return;
+      const stored = await getSetting<string>('theme', 'gold');
+      if (isTheme(stored)) applyTheme(stored);
+    })();
+  }, []);
 
   useEffect(() => {
     void (async () => {
@@ -41,6 +60,22 @@ export default function App() {
       }
     })();
   }, []);
+
+  async function finishOnboarding(theme: Theme) {
+    applyTheme(theme);
+    localStorage.setItem(ONBOARDED_KEY, '1');
+    await setSetting('theme', theme);
+    await setSetting('onboarded', true);
+    setOnboarded(true);
+  }
+
+  if (!onboarded) {
+    return (
+      <div className="app">
+        <Onboarding initialTheme={currentTheme()} onDone={finishOnboarding} />
+      </div>
+    );
+  }
 
   const plan = WEEK[new Date().getDay()];
 

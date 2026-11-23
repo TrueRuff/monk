@@ -10,6 +10,8 @@ export interface Exercise {
   reps: string;
   /** Как делать — одна точная фраза. */
   cue: string;
+  /** Пошаговая техника. */
+  tech: string[];
   /** Частая ошибка. */
   mistake?: string;
   /** Если тяжело. */

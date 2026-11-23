@@ -31,11 +31,11 @@ function Sparkline({ values }: { values: number[] }) {
 
   return (
     <svg className="chart" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" role="img" aria-label="График">
-      <polyline points={area} fill="rgba(232,182,94,0.10)" stroke="none" />
-      <polyline points={line} fill="none" stroke="#e8b65e" strokeWidth="2" strokeLinejoin="round" />
+      <polyline points={area} fill="color-mix(in srgb, var(--accent) 12%, transparent)" stroke="none" />
+      <polyline points={line} fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinejoin="round" />
       {values.map((v, i) => {
         const [x, y] = point(v, i);
-        return <circle key={i} cx={x} cy={y} r={i === values.length - 1 ? 3.5 : 2} fill="#e8b65e" />;
+        return <circle key={i} cx={x} cy={y} r={i === values.length - 1 ? 3.5 : 2} fill="var(--accent)" />;
       })}
     </svg>
   );

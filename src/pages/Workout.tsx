@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { db, ensureCheck } from '../shared/db';
 import { dateKey } from '../shared/streak';
+import { Toast } from '../shared/Toast';
 import { Btn, Card, Label, Ring } from '../shared/ui';
 import type { DayPlan } from '../shared/types';
 
@@ -10,7 +11,9 @@ export default function Workout({ plan, onExit }: { plan: DayPlan; onExit: () =>
   const key = dateKey();
   const [exIndex, setExIndex] = useState(0);
   const [doneCount, setDoneCount] = useState(0);
+  const [logs, setLogs] = useState<Record<string, number>>({});
   const [rest, setRest] = useState<number | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
   const [finished, setFinished] = useState(false);
 
   const totalSets = plan.exercises.reduce((sum, e) => sum + e.sets, 0);
@@ -37,14 +40,35 @@ export default function Workout({ plan, onExit }: { plan: DayPlan; onExit: () =>
 
   async function completeSet() {
     if (!exercise) return;
-    await db.sets.add({
+    const id = await db.sets.add({
       date: key,
       plan: plan.type,
       exercise: exercise.name,
       setIndex: doneCount,
     });
+    setLogs((prev) => ({ ...prev, [`${exIndex}-${doneCount}`]: id }));
     setDoneCount((count) => count + 1);
     setRest(REST_SECONDS);
+    navigator.vibrate?.(12);
+    setToast(`Подход ${doneCount + 1} записан`);
+  }
+
+  async function undoLast() {
+    if (doneCount === 0) return;
+    const setIndex = doneCount - 1;
+    const logId = logs[`${exIndex}-${setIndex}`];
+    if (logId !== undefined) {
+      await db.sets.delete(logId);
+      setLogs((prev) => {
+        const copy = { ...prev };
+        delete copy[`${exIndex}-${setIndex}`];
+        return copy;
+      });
+    }
+    setDoneCount((count) => Math.max(0, count - 1));
+    setRest(null);
+    setToast(null);
+    navigator.vibrate?.(12);
   }
 
   async function advance() {
@@ -56,6 +80,7 @@ export default function Workout({ plan, onExit }: { plan: DayPlan; onExit: () =>
     }
     setExIndex((index) => index + 1);
     setDoneCount(0);
+    setToast(null);
   }
 
   if (finished) {
@@ -112,6 +137,15 @@ export default function Workout({ plan, onExit }: { plan: DayPlan; onExit: () =>
         </div>
         <div className="wex-cue">{exercise.cue}</div>
 
+        <div className="tech">
+          <div className="label">Техника</div>
+          <ol className="tech-list">
+            {exercise.tech.map((step) => (
+              <li key={step}>{step}</li>
+            ))}
+          </ol>
+        </div>
+
         {exercise.mistake ? (
           <div className="wex-note">
             <b>Не так:</b> {exercise.mistake}
@@ -134,20 +168,30 @@ export default function Workout({ plan, onExit }: { plan: DayPlan; onExit: () =>
         ) : null}
 
         <div className="sets">
-          {Array.from({ length: exercise.sets }, (_, index) => (
-            <button
-              key={index}
-              type="button"
-              className={`set ${index < doneCount ? 'set-done' : ''} ${
-                index === doneCount ? 'set-current' : ''
-              }`}
-              onClick={() => undefined}
-              disabled
-            >
-              {index < doneCount ? '✓' : index + 1}
-            </button>
-          ))}
+          {Array.from({ length: exercise.sets }, (_, index) => {
+            const isDone = index < doneCount;
+            const isLast = index === doneCount - 1;
+            return (
+              <button
+                key={index}
+                type="button"
+                className={`set ${isDone ? 'set-done' : ''} ${index === doneCount ? 'set-current' : ''} ${
+                  isLast ? 'set-undoable' : ''
+                }`}
+                onClick={isLast ? undoLast : undefined}
+                disabled={!isLast}
+                aria-label={isLast ? 'Отменить последний подход' : undefined}
+              >
+                {isDone ? '✓' : index + 1}
+              </button>
+            );
+          })}
         </div>
+        {doneCount > 0 ? (
+          <div className="small muted" style={{ marginTop: -8, marginBottom: 12 }}>
+            Нажми на последнюю ✓, чтобы отменить подход.
+          </div>
+        ) : null}
 
         <Btn wide size="lg" onClick={exerciseDone ? advance : completeSet}>
           {exerciseDone
@@ -183,10 +227,25 @@ export default function Workout({ plan, onExit }: { plan: DayPlan; onExit: () =>
           <div className="rest-next">
             {rest > 30 ? 'Дыши носом, не садись. Пульс должен упасть до ровного.' : 'Ещё немного — и следующий подход.'}
           </div>
-          <Btn variant="ghost" onClick={() => setRest(null)}>
-            Пропустить отдых
-          </Btn>
+          <div className="rest-actions">
+            <Btn variant="ghost" onClick={() => setRest(null)}>
+              Пропустить отдых
+            </Btn>
+            <Btn
+              variant="secondary"
+              onClick={() => {
+                setRest(null);
+                void undoLast();
+              }}
+            >
+              Отменить подход
+            </Btn>
+          </div>
         </div>
+      ) : null}
+
+      {toast && rest === null ? (
+        <Toast message={toast} onAction={undoLast} onClose={() => setToast(null)} />
       ) : null}
     </div>
   );
