@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Монах</string>
+    <string name="title_activity_main">Монах</string>
+    <string name="package_name">com.trueruff.monk</string>
+    <string name="custom_url_scheme">com.trueruff.monk</string>
+</resources>

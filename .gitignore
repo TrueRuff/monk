@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.pnpm-store/
+.tmp/
+*.log
+.DS_Store
+.idea/
+.vscode/
+
+# Android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+android/capacitor-cordova-android-plugins/build/
