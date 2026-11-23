@@ -1,17 +1,19 @@
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 
 export function Card({
   children,
   className = '',
   onClick,
+  style,
 }: {
   children: ReactNode;
   className?: string;
   onClick?: () => void;
+  style?: CSSProperties;
 }) {
   const props = onClick ? { role: 'button', tabIndex: 0, onClick } : {};
   return (
-    <div className={`card ${className}`} {...props}>
+    <div className={`card ${className}`} style={style} {...props}>
       {children}
     </div>
   );

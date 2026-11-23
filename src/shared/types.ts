@@ -35,6 +35,8 @@ export interface Check {
   date: string;
   minimum: boolean;
   full: boolean;
+  /** День пропущен, но стрик сохранён заморозкой. */
+  frozen?: boolean;
 }
 
 export interface Metric {

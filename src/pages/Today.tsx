@@ -2,18 +2,24 @@ import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { format } from 'date-fns';
 import { ru } from 'date-fns/locale';
-import { db, ensureCheck } from '../shared/db';
+import { db, ensureCheck, exportAll, setSetting } from '../shared/db';
+import { FREEZE_LIMIT, applyFreeze, monthKey, undoFreeze } from '../shared/freeze';
 import { MINIMUM, WEEK } from '../shared/plan';
-import { computeStreak, dateKey } from '../shared/streak';
+import { isDeload, phaseFor, weekNumber } from '../shared/program';
+import { activeDates, computeStreak, dateKey, yesterdayKey } from '../shared/streak';
 import { Toast } from '../shared/Toast';
 import { Btn, Card, Label, Ring } from '../shared/ui';
+
+const DAY = 24 * 60 * 60 * 1000;
 
 export default function Today({
   openWorkout,
   openMonk,
+  openReview,
 }: {
   openWorkout: () => void;
   openMonk: () => void;
+  openReview: () => void;
 }) {
   const now = new Date();
   const key = dateKey(now);
@@ -23,14 +29,37 @@ export default function Today({
   const check = useLiveQuery(() => db.checks.get(key), [key]);
   const all = useLiveQuery(() => db.checks.toArray(), []);
   const todaySets = useLiveQuery(() => db.sets.where('date').equals(key).count(), [key]);
+  const startRow = useLiveQuery(() => db.settings.get('startDate'), []);
+  const freezeRow = useLiveQuery(() => db.settings.get('freezeUsed'), []);
+  const backupRow = useLiveQuery(() => db.settings.get('lastBackup'), []);
+  const yKey = yesterdayKey(now);
+  const yesterday = useLiveQuery(() => db.checks.get(yKey), [yKey]);
 
-  const streak = all ? computeStreak(new Set(all.filter((c) => c.minimum).map((c) => c.date))) : 0;
+  const streak = all ? computeStreak(activeDates(all)) : 0;
   const minimum = Boolean(check?.minimum);
   const full = Boolean(check?.full);
 
   const totalSets = plan.exercises.reduce((sum, e) => sum + e.sets, 0);
   const doneSets = Math.min(todaySets ?? 0, totalSets);
   const ratio = totalSets ? doneSets / totalSets : minimum ? 1 : 0;
+
+  const startDate = typeof startRow?.value === 'string' ? startRow.value : null;
+  const week = startDate ? weekNumber(startDate, now) : null;
+  const phase = week ? phaseFor(week) : null;
+  const deload = week ? isDeload(week) : false;
+
+  const used = (freezeRow?.value as Record<string, number> | undefined) ?? {};
+  const left = Math.max(0, FREEZE_LIMIT - (used[monthKey(now)] ?? 0));
+  const hasHistory = (all ?? []).some((item) => item.date < yKey);
+  const yesterdayActive = Boolean(yesterday?.minimum || yesterday?.frozen);
+  const frozenYesterday = Boolean(yesterday?.frozen);
+  const offerFreeze = hasHistory && !yesterdayActive && left > 0;
+
+  const lastBackup = typeof backupRow?.value === 'string' ? backupRow.value : null;
+  const daysSinceBackup = lastBackup
+    ? Math.floor((now.getTime() - new Date(lastBackup).getTime()) / DAY)
+    : null;
+  const needBackup = (all ?? []).length >= 7 && (daysSinceBackup === null || daysSinceBackup > 30);
 
   async function markMinimum() {
     if (minimum) {
@@ -73,12 +102,52 @@ export default function Today({
     });
   }
 
+  async function freezeYesterday() {
+    const ok = await applyFreeze(yKey);
+    if (!ok) {
+      setToast({ text: 'Заморозки на этот месяц кончились' });
+      return;
+    }
+    navigator.vibrate?.(12);
+    setToast({
+      text: 'Вчерашний день заморожен',
+      undo: async () => {
+        await undoFreeze(yKey);
+      },
+    });
+  }
+
+  async function unfreeze() {
+    await undoFreeze(yKey);
+    setToast({ text: 'Заморозка отменена' });
+  }
+
+  async function downloadBackup() {
+    const data = await exportAll();
+    const blob = new Blob([data], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'monk-backup.json';
+    a.click();
+    URL.revokeObjectURL(url);
+    await setSetting('lastBackup', dateKey());
+    setToast({ text: 'Бэкап сохранён' });
+  }
+
+  const isSunday = now.getDay() === 0;
+
   return (
     <div className="screen">
       <div className="top">
         <div>
           <div className="top-date">{format(now, 'EEEE, d MMMM', { locale: ru })}</div>
           <h1 className="h1">{plan.title}</h1>
+          {week && phase ? (
+            <div className="phase-chip">
+              Неделя {Math.min(week, 26)} · {phase.name}
+            </div>
+          ) : null}
         </div>
         <div className="streak-badge">
           <span className="streak-flame" />
@@ -96,6 +165,39 @@ export default function Today({
           {full ? 'Открыть тренировку' : 'Начать'}
         </Btn>
       </Card>
+
+      {deload ? (
+        <Card className="card-note">
+          <Label>Разгрузка</Label>
+          <p className="small" style={{ margin: '6px 0 0' }}>
+            Пятая неделя цикла: минус 40% объёма. Работаем в удовольствие, без рекордов.
+          </p>
+        </Card>
+      ) : null}
+
+      {offerFreeze ? (
+        <Card className="card-note">
+          <Label>Вчера пропущено</Label>
+          <p className="small" style={{ margin: '6px 0 12px' }}>
+            Можно заморозить день, чтобы стрик не сгорел. Осталось {left} из {FREEZE_LIMIT} в этом месяце.
+          </p>
+          <Btn wide variant="secondary" onClick={freezeYesterday}>
+            Заморозить вчера
+          </Btn>
+        </Card>
+      ) : null}
+
+      {frozenYesterday ? (
+        <Card className="card-note">
+          <Label>Вчера заморожено</Label>
+          <p className="small" style={{ margin: '6px 0 12px' }}>
+            Стрик сохранён. Если это была ошибка — верни как было.
+          </p>
+          <Btn wide variant="ghost" onClick={unfreeze}>
+            Отменить заморозку
+          </Btn>
+        </Card>
+      ) : null}
 
       <div className="quick">
         <button type="button" className="quick-btn" onClick={addPullup}>
@@ -131,6 +233,25 @@ export default function Today({
         </div>
       </Card>
 
+      <Btn wide variant={isSunday ? 'primary' : 'secondary'} onClick={openReview}>
+        Итоги недели
+      </Btn>
+
+      {needBackup ? (
+        <Card className="card-note" style={{ marginTop: 12 }}>
+          <Label>Бэкап</Label>
+          <p className="small" style={{ margin: '6px 0 12px' }}>
+            {daysSinceBackup === null
+              ? 'Данных уже много, а копии нет.'
+              : `Последняя копия ${daysSinceBackup} дней назад.`}{' '}
+            Скачай файл — он восстановит всё.
+          </p>
+          <Btn wide variant="secondary" onClick={downloadBackup}>
+            Скачать бэкап
+          </Btn>
+        </Card>
+      ) : null}
+
       <h2 className="h2">Если нет сил</h2>
       <Card>
         {MINIMUM.map((item) => (
@@ -150,11 +271,7 @@ export default function Today({
       <p className="hint">Правило простое: день закрыт, если сделал минимум. Не ноль — уже победа.</p>
 
       {toast ? (
-        <Toast
-          message={toast.text}
-          onAction={toast.undo}
-          onClose={() => setToast(null)}
-        />
+        <Toast message={toast.text} onAction={toast.undo} onClose={() => setToast(null)} />
       ) : null}
     </div>
   );

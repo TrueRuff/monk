@@ -1,17 +1,26 @@
-import { useEffect, useState } from 'react';
-import { db, exportAll, getSetting, setSetting } from '../shared/db';
+import { useEffect, useRef, useState, type ChangeEvent } from 'react';
+import { format, parseISO } from 'date-fns';
+import { ru } from 'date-fns/locale';
+import { db, exportAll, getSetting, importAll, setSetting } from '../shared/db';
 import { clearAll, isNative, scheduleAll } from '../shared/notifications';
 import { applyTheme, isTheme, THEMES, type Theme } from '../shared/theme';
 import { VERSION } from '../shared/version';
+import { parseBackup, summarize, type BackupData } from '../shared/backup';
+import { dateKey } from '../shared/streak';
 import { Btn, Card, Label } from '../shared/ui';
 
 export default function Settings() {
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [note, setNote] = useState('');
   const [theme, setTheme] = useState<Theme>('gold');
+  const [start, setStart] = useState('');
+  const [pending, setPending] = useState<BackupData | null>(null);
+  const [importError, setImportError] = useState('');
+  const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     getSetting<boolean>('notifications', false).then(setEnabled);
+    getSetting<string>('startDate', '').then(setStart);
     const current = document.documentElement.dataset.theme;
     if (isTheme(current)) {
       setTheme(current);
@@ -54,6 +63,32 @@ export default function Settings() {
     a.download = 'monk-backup.json';
     a.click();
     URL.revokeObjectURL(url);
+    await setSetting('lastBackup', dateKey());
+  }
+
+  async function onFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    const text = await file.text();
+    const parsed = parseBackup(text);
+    if (!parsed.ok) {
+      setPending(null);
+      setImportError(parsed.error);
+      return;
+    }
+    setImportError('');
+    setPending(parsed.data);
+  }
+
+  async function applyImport(mode: 'replace' | 'merge') {
+    if (!pending) return;
+    try {
+      await importAll(pending, mode);
+      window.location.reload();
+    } catch (error) {
+      setImportError(`Не удалось записать данные: ${String(error)}`);
+    }
   }
 
   async function reset() {
@@ -61,6 +96,13 @@ export default function Settings() {
     await db.delete();
     localStorage.removeItem('monk.onboarded');
     window.location.reload();
+  }
+
+  async function restartCycle() {
+    if (!window.confirm('Начать 26 недель заново с сегодняшнего дня?')) return;
+    await setSetting('startDate', dateKey());
+    setStart(dateKey());
+    setNote('Цикл перезапущен с сегодня.');
   }
 
   return (
@@ -114,15 +156,62 @@ export default function Settings() {
       </Card>
 
       <Card>
+        <Label>Цикл плана</Label>
+        <p className="small" style={{ margin: '8px 0 12px' }}>
+          Старт:{' '}
+          {start ? format(parseISO(start), 'd MMMM yyyy', { locale: ru }) : 'ещё не задан'}
+        </p>
+        <Btn variant="secondary" onClick={restartCycle}>
+          Начать 26 недель заново
+        </Btn>
+      </Card>
+
+      <Card>
         <Label>Данные</Label>
         <div className="input-row" style={{ marginTop: 12 }}>
           <Btn variant="secondary" onClick={download}>
             Экспорт JSON
           </Btn>
-          <Btn variant="ghost" onClick={reset}>
-            Сбросить
+          <Btn variant="secondary" onClick={() => fileRef.current?.click()}>
+            Импорт
           </Btn>
         </div>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="application/json,.json"
+          onChange={onFile}
+          style={{ display: 'none' }}
+        />
+
+        {importError ? (
+          <div className="small" style={{ color: 'var(--danger)', marginTop: 12 }}>
+            {importError}
+          </div>
+        ) : null}
+
+        {pending ? (
+          <div style={{ marginTop: 14 }}>
+            <div className="label">В файле</div>
+            <p className="small" style={{ margin: '6px 0 12px' }}>
+              {summarize(pending)}
+            </p>
+            <div className="input-row">
+              <Btn onClick={() => applyImport('merge')}>Объединить</Btn>
+              <Btn variant="ghost" onClick={() => applyImport('replace')}>
+                Заменить
+              </Btn>
+            </div>
+            <div className="small muted" style={{ marginTop: 8 }}>
+              «Объединить» добавит только то, чего нет. «Заменить» сотрёт текущие данные.
+            </div>
+          </div>
+        ) : null}
+
+        <div className="divider" />
+        <Btn variant="ghost" onClick={reset}>
+          Сбросить всё
+        </Btn>
       </Card>
 
       <Card>

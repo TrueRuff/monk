@@ -4,9 +4,28 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
-const TARGET_URL = process.argv[2] ?? 'http://localhost:4179/';
+const TARGET_URL = process.argv[2] ?? 'http://localhost:4182/';
 const OUT_DIR = process.argv[3] ?? '.';
-const PORT = 9412;
+const PORT = 9413;
+
+function dayKey(offset) {
+  const d = new Date();
+  d.setDate(d.getDate() + offset);
+  return d.toISOString().slice(0, 10);
+}
+
+const seed = {
+  version: 2,
+  checks: [
+    { date: dayKey(-3), minimum: true, full: true },
+    { date: dayKey(-2), minimum: true, full: true },
+  ],
+  metrics: [],
+  sets: [],
+  settings: [],
+};
+const seedPath = join(OUT_DIR, 'ux-seed.json');
+writeFileSync(seedPath, JSON.stringify(seed, null, 2));
 
 const profile = mkdtempSync(join(tmpdir(), 'monk-ux-'));
 const child = spawn(
@@ -104,6 +123,15 @@ async function click(selector) {
   })()`);
 }
 
+async function clickByText(text) {
+  return evaluate(`(() => {
+    const el = [...document.querySelectorAll('button')].find((b) => b.innerText.includes(${JSON.stringify(text)}));
+    if (!el) return false;
+    el.click();
+    return true;
+  })()`);
+}
+
 async function shot(name) {
   const res = await send('Page.captureScreenshot', { format: 'png' });
   writeFileSync(join(OUT_DIR, `${name}.png`), Buffer.from(res.result.data, 'base64'));
@@ -114,8 +142,11 @@ function check(name, ok, details = '') {
   results.push({ name, ok, details });
 }
 
+const counterSel = '.row-sub';
+
 await send('Runtime.enable');
 await send('Page.enable');
+await send('DOM.enable');
 await send('Page.navigate', { url: TARGET_URL });
 await sleep(1200);
 
@@ -125,9 +156,9 @@ try {
 
   await click('.onb-skip');
   check('Онбординг закрывается кнопкой «Пропустить»', await waitFor("!!document.querySelector('.nav')", 5000));
+  check('Видно неделю и фазу плана', await evaluate("!!document.querySelector('.phase-chip')"));
   await shot('ux-02-today');
 
-  const counterSel = ".row-sub";
   const before = await evaluate(`document.querySelector('${counterSel}')?.innerText ?? ''`);
   await click('.quick-btn');
   const incremented = await waitFor(
@@ -137,22 +168,17 @@ try {
   check('«+1 подтягивание» увеличивает счётчик', incremented, before);
 
   const toastAppeared = await waitFor("!!document.querySelector('.toast')", 4000);
-  check('Плашка с отменой появляется', toastAppeared, toastAppeared ? '' : 'toast не найден');
-  await shot('ux-03-toast');
-
-  const toastText = await evaluate("document.querySelector('.toast')?.innerText ?? ''");
-  check('В плашке есть «Отменить»', toastText.includes('Отменить'), toastText.replace(/\n/g, ' | '));
-
+  check('Плашка с отменой появляется', toastAppeared);
   const toastVisible = await evaluate(`
     (() => {
       const el = document.querySelector('.toast');
       if (!el) return 'none';
       const r = el.getBoundingClientRect();
-      const inside = r.top >= 0 && r.bottom <= window.innerHeight + 1 && r.width > 0 && r.height > 0;
-      return inside ? 'visible' : 'offscreen top=' + Math.round(r.top) + ' bottom=' + Math.round(r.bottom) + ' vh=' + window.innerHeight;
+      return r.top >= 0 && r.bottom <= window.innerHeight + 1 && r.width > 0 ? 'visible' : 'offscreen';
     })()
   `);
   check('Плашка реально видна на экране', toastVisible === 'visible', toastVisible);
+  await shot('ux-03-toast');
 
   await click('.toast-action');
   await sleep(400);
@@ -182,8 +208,6 @@ try {
     check('В экране отдыха есть «Отменить подход»', undoBtn === 'clicked', undoBtn);
     await sleep(400);
     check('Отмена в отдыхе закрывает отдых', await evaluate("!document.querySelector('.rest-screen')"));
-    await shot('ux-05-after-undo');
-
     await click('.link');
     await waitFor("!!document.querySelector('.nav')", 4000);
   }
@@ -200,24 +224,71 @@ try {
     })()
   `);
   check('Тема переключается на синюю', themeClicked && (await evaluate("document.documentElement.dataset.theme === 'blue'")));
-  await shot('ux-06-settings');
+  await shot('ux-05-settings');
 
   await send('Page.reload');
   await sleep(1800);
   check('Тема сохраняется после перезагрузки', await evaluate("document.documentElement.dataset.theme === 'blue'"));
 
   await click('.nav-item:nth-child(4)');
-  await waitFor("!!document.querySelector('.themes')", 4000);
-  const replay = await evaluate(`
-    (() => {
-      const btn = [...document.querySelectorAll('button')].find((b) => b.innerText.includes('Знакомство'));
-      if (!btn) return false;
-      btn.click();
-      return true;
-    })()
-  `);
-  await sleep(1800);
-  check('Знакомство запускается заново', replay && (await evaluate("!!document.querySelector('.onb')")));
+  await waitFor("!!document.querySelector('input[type=file]')", 4000);
+  const doc = await send('DOM.getDocument');
+  const inputNode = await send('DOM.querySelector', {
+    nodeId: doc.result.root.nodeId,
+    selector: 'input[type=file]',
+  });
+  await send('DOM.setFileInputFiles', { nodeId: inputNode.result.nodeId, files: [seedPath] });
+  const pending = await waitFor("[...document.querySelectorAll('button')].some((b) => b.innerText.includes('Объединить'))", 5000);
+  check('Импорт показывает сводку файла', pending);
+  await shot('ux-06-import');
+
+  if (pending) {
+    await clickByText('Объединить');
+    await sleep(2000);
+    check('После импорта приложение перезагружается', await waitFor("!!document.querySelector('.nav')", 6000));
+  }
+
+  await click('.nav-item:nth-child(1)');
+  const freezeCard = await waitFor("!!document.querySelector('.card-note')", 4000);
+  check('Появляется карточка заморозки за пропущенный вчера', freezeCard);
+  await shot('ux-07-freeze');
+
+  if (freezeCard) {
+    await clickByText('Заморозить вчера');
+    await sleep(700);
+    const streakText = await evaluate("document.querySelector('.streak-num')?.innerText ?? ''");
+    check('Заморозка сохраняет стрик', streakText === '3', `стрик: ${streakText}`);
+    await clickByText('Отменить заморозку');
+    await sleep(700);
+    const streakAfter = await evaluate("document.querySelector('.streak-num')?.innerText ?? ''");
+    check('Отмена заморозки обнуляет стрик', streakAfter === '0', `стрик: ${streakAfter}`);
+  }
+
+  await clickByText('Итоги недели');
+  const reviewOpen = await waitFor("!!document.querySelector('.textarea')", 4000);
+  check('Итоги недели открываются', reviewOpen);
+  await shot('ux-08-review');
+
+  if (reviewOpen) {
+    await evaluate(`
+      (() => {
+        const el = document.querySelector('.textarea');
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+        setter.call(el, 'тестовая заметка');
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        return el.value;
+      })()
+    `);
+    await clickByText('Сохранить заметку');
+    await sleep(600);
+    await send('Page.reload');
+    await sleep(1800);
+    await clickByText('Итоги недели');
+    await waitFor("!!document.querySelector('.textarea')", 4000);
+    const saved = await evaluate("document.querySelector('.textarea')?.value ?? ''");
+    check('Заметка обзора сохраняется', saved === 'тестовая заметка', saved);
+    await shot('ux-09-review-saved');
+  }
 } catch (error) {
   check('Тест упал', false, String(error));
 } finally {

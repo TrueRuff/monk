@@ -1,5 +1,6 @@
 import Dexie, { type Table } from 'dexie';
 import type { Check, Metric, SetLog, Setting } from './types';
+import type { BackupData } from './backup';
 
 class MonkDB extends Dexie {
   checks!: Table<Check, string>;
@@ -44,5 +45,38 @@ export async function exportAll(): Promise<string> {
     db.sets.toArray(),
     db.settings.toArray(),
   ]);
-  return JSON.stringify({ version: 1, checks, metrics, sets, settings }, null, 2);
+  const data: BackupData = { version: 2, checks, metrics, sets, settings };
+  return JSON.stringify(data, null, 2);
+}
+
+function metricKey(metric: Metric): string {
+  return `${metric.date}|${metric.kind}`;
+}
+
+function setKey(set: SetLog): string {
+  return `${set.date}|${set.plan}|${set.exercise}|${set.setIndex}`;
+}
+
+export async function importAll(data: BackupData, mode: 'replace' | 'merge'): Promise<void> {
+  await db.transaction('rw', db.checks, db.metrics, db.sets, db.settings, async () => {
+    if (mode === 'replace') {
+      await db.checks.clear();
+      await db.metrics.clear();
+      await db.sets.clear();
+      await db.settings.clear();
+    }
+
+    await db.checks.bulkPut(data.checks);
+    await db.settings.bulkPut(data.settings);
+
+    const existingMetrics = await db.metrics.toArray();
+    const seenMetrics = new Set(existingMetrics.map(metricKey));
+    const metricsToAdd = data.metrics.filter((metric) => !seenMetrics.has(metricKey(metric)));
+    if (metricsToAdd.length) await db.metrics.bulkAdd(metricsToAdd);
+
+    const existingSets = await db.sets.toArray();
+    const seenSets = new Set(existingSets.map(setKey));
+    const setsToAdd = data.sets.filter((item) => !seenSets.has(setKey(item)));
+    if (setsToAdd.length) await db.sets.bulkAdd(setsToAdd);
+  });
 }

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../shared/db';
-import { dateKey, lastNDays } from '../shared/streak';
+import { activeDates, dateKey, lastNDays } from '../shared/streak';
 import { Btn, Card, Label } from '../shared/ui';
 import type { MetricKind } from '../shared/types';
 
@@ -50,7 +50,8 @@ export default function Progress() {
   const metrics = useLiveQuery(() => db.metrics.orderBy('date').toArray(), []);
   const checks = useLiveQuery(() => db.checks.toArray(), []);
 
-  const doneDates = new Set((checks ?? []).filter((c) => c.minimum).map((c) => c.date));
+  const doneDates = activeDates(checks ?? []);
+  const frozenDates = new Set((checks ?? []).filter((item) => item.frozen).map((item) => item.date));
   const days = lastNDays(70);
 
   async function add(kind: MetricKind) {
@@ -139,13 +140,15 @@ export default function Progress() {
           {days.map((day) => (
             <div
               key={day}
-              className={`heat ${doneDates.has(day) ? 'heat-on' : ''} ${day === dateKey() ? 'heat-today' : ''}`}
+              className={`heat ${doneDates.has(day) ? 'heat-on' : ''} ${
+                frozenDates.has(day) ? 'heat-frozen' : ''
+              } ${day === dateKey() ? 'heat-today' : ''}`}
               title={day}
             />
           ))}
         </div>
         <div className="label" style={{ marginTop: 12 }}>
-          Закрашено — день закрыт
+          Закрашено — день закрыт, контур — заморозка
         </div>
       </Card>
 

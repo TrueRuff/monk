@@ -5,10 +5,12 @@ import Progress from '../pages/Progress';
 import Settings from '../pages/Settings';
 import Workout from '../pages/Workout';
 import Monk from '../pages/Monk';
+import Review from '../pages/Review';
 import Onboarding from '../pages/Onboarding';
 import { WEEK } from '../shared/plan';
-import { getSetting, setSetting } from '../shared/db';
+import { db, getSetting, setSetting } from '../shared/db';
 import { isNative, scheduleAll } from '../shared/notifications';
+import { dateKey } from '../shared/streak';
 import { applyTheme, isTheme, type Theme } from '../shared/theme';
 import type { Tab } from '../shared/types';
 
@@ -37,6 +39,7 @@ export default function App() {
   const [tab, setTab] = useState<Tab>(initialTab);
   const [workout, setWorkout] = useState(() => window.location.hash === '#workout');
   const [monk, setMonk] = useState(false);
+  const [review, setReview] = useState(false);
   const [onboarded, setOnboarded] = useState(() => localStorage.getItem(ONBOARDED_KEY) === '1');
 
   useEffect(() => {
@@ -61,11 +64,23 @@ export default function App() {
     })();
   }, []);
 
+  useEffect(() => {
+    void (async () => {
+      const start = await getSetting<string>('startDate', '');
+      if (start) return;
+      const first = await db.checks.orderBy('date').first();
+      await setSetting('startDate', first?.date ?? dateKey());
+    })();
+  }, []);
+
   async function finishOnboarding(theme: Theme) {
     applyTheme(theme);
     localStorage.setItem(ONBOARDED_KEY, '1');
     await setSetting('theme', theme);
     await setSetting('onboarded', true);
+    if (!(await getSetting<string>('startDate', ''))) {
+      await setSetting('startDate', dateKey());
+    }
     setOnboarded(true);
   }
 
@@ -101,10 +116,22 @@ export default function App() {
     );
   }
 
+  if (review) {
+    return (
+      <div className="app">
+        <Review onExit={() => setReview(false)} />
+      </div>
+    );
+  }
+
   return (
     <div className="app">
       {tab === 'today' && (
-        <Today openWorkout={() => setWorkout(true)} openMonk={() => setMonk(true)} />
+        <Today
+          openWorkout={() => setWorkout(true)}
+          openMonk={() => setMonk(true)}
+          openReview={() => setReview(true)}
+        />
       )}
       {tab === 'plan' && <Plan />}
       {tab === 'progress' && <Progress />}
