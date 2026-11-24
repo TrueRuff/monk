@@ -13,6 +13,7 @@
   --ok: #74c9a3;
   --r: 22px;
   --r-sm: 14px;
+  color-scheme: dark;
 }
 
 :root[data-theme='blue'] {
@@ -1121,4 +1122,83 @@ body {
 
 .set-undoable {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+/* ---------- 0.5: время напоминаний и еда ---------- */
+
+.input.time-input {
+  width: 106px;
+  min-height: 42px;
+  padding: 0 8px;
+  font-size: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
+}
+
+.food-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.food-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 40px;
+  padding: 0 12px;
+  border-radius: 11px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 14.5px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+
+.food-chip:active {
+  border-color: var(--accent);
+}
+
+.food-x {
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+}
+
+.food-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.food-preset {
+  padding: 0 10px;
+  min-height: 34px;
+  border-radius: 999px;
+  border: 1px dashed var(--line-strong);
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.food-preset:active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.food-pick {
+  align-self: center;
+  font-size: 13.5px;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.input-row .btn-primary {
+  flex: 0 0 auto;
 }

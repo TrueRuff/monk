@@ -2,15 +2,31 @@ import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { format, parseISO } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import { db, exportAll, getSetting, importAll, setSetting } from '../shared/db';
-import { clearAll, isNative, scheduleAll } from '../shared/notifications';
+import {
+  clearAll,
+  isNative,
+  loadReminders,
+  requestPermission,
+  requestWebPermission,
+  saveReminders,
+  scheduleAll,
+  testNotification,
+  webPermission,
+  type WebPermission,
+} from '../shared/notifications';
+import { dayLabel, DEFAULT_REMINDERS, parseTime, timeValue, type Reminder } from '../shared/reminders';
 import { applyTheme, isTheme, THEMES, type Theme } from '../shared/theme';
 import { VERSION } from '../shared/version';
 import { parseBackup, summarize, type BackupData } from '../shared/backup';
 import { dateKey } from '../shared/streak';
 import { Btn, Card, Label } from '../shared/ui';
 
+const NATIVE = isNative();
+
 export default function Settings() {
   const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [reminders, setReminders] = useState<Reminder[]>(DEFAULT_REMINDERS);
+  const [permission, setPermission] = useState<WebPermission>(() => (NATIVE ? 'granted' : webPermission()));
   const [note, setNote] = useState('');
   const [theme, setTheme] = useState<Theme>('gold');
   const [start, setStart] = useState('');
@@ -21,6 +37,7 @@ export default function Settings() {
   useEffect(() => {
     getSetting<boolean>('notifications', false).then(setEnabled);
     getSetting<string>('startDate', '').then(setStart);
+    void loadReminders().then(setReminders);
     const current = document.documentElement.dataset.theme;
     if (isTheme(current)) {
       setTheme(current);
@@ -41,17 +58,57 @@ export default function Settings() {
     const next = !enabled;
     setEnabled(next);
     await setSetting('notifications', next);
-    if (!isNative()) {
-      setNote('В браузере напоминания не работают — только в APK.');
-      return;
-    }
-    if (next) {
-      await scheduleAll();
-      setNote('Поставил на 3 недели вперёд.');
-    } else {
+    if (!next) {
       await clearAll();
       setNote('Напоминания выключены.');
+      return;
     }
+    if (NATIVE) {
+      const granted = await requestPermission();
+      if (!granted) {
+        setNote('Разреши уведомления в настройках Android — без этого они не придут.');
+        return;
+      }
+      await scheduleAll();
+      setNote('Включено. Поставил на 3 недели вперёд.');
+      return;
+    }
+    const granted = await requestWebPermission();
+    setPermission(webPermission());
+    if (!granted) {
+      setNote('Браузер не дал разрешение. Нажми на замок в адресной строке → «Уведомления» → «Разрешить».');
+      return;
+    }
+    setNote('Включено. Напоминания придут, пока сайт открыт.');
+  }
+
+  async function changeTime(id: string, value: string) {
+    const parsed = parseTime(value);
+    if (!parsed) return;
+    const next = reminders.map((item) =>
+      item.id === id ? { ...item, hour: parsed.hour, minute: parsed.minute } : item,
+    );
+    setReminders(next);
+    await saveReminders(next);
+    setNote('Время сохранено.');
+  }
+
+  async function resetTimes() {
+    setReminders(DEFAULT_REMINDERS);
+    await saveReminders(DEFAULT_REMINDERS);
+    setNote('Время вернулось к исходному.');
+  }
+
+  async function askPermission() {
+    const granted = await requestWebPermission();
+    setPermission(NATIVE ? 'granted' : webPermission());
+    setNote(granted ? 'Разрешено. Нажми «Проверить», чтобы увидеть уведомление.' : 'Браузер заблокировал уведомления для сайта.');
+  }
+
+  async function test() {
+    const ok = await testNotification();
+    setPermission(NATIVE ? 'granted' : webPermission());
+    setNote(ok ? 'Проверка отправлена. Уведомление должно появиться сверху.' : 'Не получилось: нет разрешения на уведомления.');
   }
 
   async function download() {
@@ -105,6 +162,8 @@ export default function Settings() {
     setNote('Цикл перезапущен с сегодня.');
   }
 
+  const showPermissionButton = !NATIVE && permission !== 'granted';
+
   return (
     <div className="screen">
       <div className="top">
@@ -136,7 +195,7 @@ export default function Settings() {
           <div className="row-main">
             <div className="row-title">Напоминания</div>
             <div className="row-sub">
-              07:30 утро · 17:00 вт · 18:20 ср · 16:30 пт · 21:00 страховка · 20:00 вс итоги
+              {NATIVE ? 'Работают, даже когда приложение закрыто' : 'Пока сайт открыт — в том числе свёрнутый'}
             </div>
           </div>
           <button
@@ -148,6 +207,57 @@ export default function Settings() {
             <span className="switch-knob" />
           </button>
         </div>
+
+        {enabled ? (
+          <>
+            {showPermissionButton ? (
+              <div style={{ marginTop: 12 }}>
+                <Btn variant="secondary" onClick={askPermission}>
+                  Разрешить уведомления
+                </Btn>
+                <div className="small muted" style={{ marginTop: 8 }}>
+                  {permission === 'denied'
+                    ? 'Сейчас браузер блокирует. Замок в адресной строке → «Уведомления» → «Разрешить».'
+                    : 'Без разрешения браузер не покажет ни одного напоминания.'}
+                </div>
+              </div>
+            ) : null}
+
+            <div className="divider" />
+
+            {reminders.map((reminder) => (
+              <div className="row" key={reminder.id}>
+                <div className="row-main">
+                  <div className="row-title">{reminder.title}</div>
+                  <div className="row-sub">{dayLabel(reminder.weekday)}</div>
+                </div>
+                <input
+                  className="input time-input"
+                  type="time"
+                  value={timeValue(reminder)}
+                  aria-label={`Время: ${reminder.title}`}
+                  onChange={(event) => void changeTime(reminder.id, event.target.value)}
+                />
+              </div>
+            ))}
+
+            <div className="input-row" style={{ marginTop: 16 }}>
+              <Btn variant="secondary" onClick={test}>
+                Проверить
+              </Btn>
+              <Btn variant="ghost" onClick={resetTimes}>
+                Время по умолчанию
+              </Btn>
+            </div>
+            {!NATIVE ? (
+              <p className="small muted" style={{ margin: '10px 0 0', lineHeight: 1.5 }}>
+                Браузер не умеет будить закрытый сайт. Если выгрузит вкладку — напоминание не придёт. В APK
+                ограничения нет.
+              </p>
+            ) : null}
+          </>
+        ) : null}
+
         {note ? (
           <div className="small" style={{ color: 'var(--accent)', marginTop: 10 }}>
             {note}

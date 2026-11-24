@@ -9,7 +9,12 @@ import Review from '../pages/Review';
 import Onboarding from '../pages/Onboarding';
 import { WEEK } from '../shared/plan';
 import { db, getSetting, setSetting } from '../shared/db';
-import { isNative, scheduleAll } from '../shared/notifications';
+import {
+  isNative,
+  scheduleAll,
+  startWebReminders,
+  syncServiceWorkerSchedule,
+} from '../shared/notifications';
 import { dateKey } from '../shared/streak';
 import { applyTheme, isTheme, type Theme } from '../shared/theme';
 import type { Tab } from '../shared/types';
@@ -54,15 +59,17 @@ export default function App() {
   useEffect(() => {
     void (async () => {
       const enabled = await getSetting<boolean>('notifications', false);
-      if (enabled && isNative()) {
-        try {
-          await scheduleAll();
-        } catch {
-          /* напоминания не критичны для запуска */
-        }
+      if (!enabled) return;
+      try {
+        if (isNative()) await scheduleAll();
+        else await syncServiceWorkerSchedule();
+      } catch {
+        /* напоминания не критичны для запуска */
       }
     })();
   }, []);
+
+  useEffect(() => startWebReminders(), []);
 
   useEffect(() => {
     void (async () => {

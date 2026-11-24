@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 const TARGET_URL = process.argv[2] ?? 'http://localhost:4182/';
@@ -24,7 +24,7 @@ const seed = {
   sets: [],
   settings: [],
 };
-const seedPath = join(OUT_DIR, 'ux-seed.json');
+const seedPath = resolve(OUT_DIR, 'ux-seed.json');
 writeFileSync(seedPath, JSON.stringify(seed, null, 2));
 
 const profile = mkdtempSync(join(tmpdir(), 'monk-ux-'));
@@ -84,7 +84,8 @@ ws.onmessage = (event) => {
     return;
   }
   if (msg.method === 'Runtime.exceptionThrown') {
-    consoleErrors.push(msg.params.exceptionDetails?.text ?? 'exception');
+    const details = msg.params.exceptionDetails;
+    consoleErrors.push(details?.exception?.description ?? details?.text ?? 'exception');
   }
   if (msg.method === 'Runtime.consoleAPICalled' && msg.params.type === 'error') {
     consoleErrors.push(msg.params.args.map((a) => a.value ?? a.description).join(' '));
@@ -130,6 +131,23 @@ async function clickByText(text) {
     el.click();
     return true;
   })()`);
+}
+
+async function setInputValue(selector, value) {
+  return evaluate(`(() => {
+    const el = document.querySelector(${JSON.stringify(selector)});
+    if (!el) return false;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    setter.call(el, ${JSON.stringify(value)});
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  })()`);
+}
+
+async function sendOk(method, params = {}) {
+  const res = await send(method, params);
+  return !res.error;
 }
 
 async function shot(name) {
@@ -226,9 +244,50 @@ try {
   check('Тема переключается на синюю', themeClicked && (await evaluate("document.documentElement.dataset.theme === 'blue'")));
   await shot('ux-05-settings');
 
+  // --- напоминания: разрешение, время, проверка ---
+  const origin = new URL(TARGET_URL).origin;
+  const granted =
+    (await sendOk('Browser.grantPermissions', { origin, permissions: ['notifications'] })) ||
+    (await sendOk('Browser.setPermission', {
+      permission: { name: 'notifications' },
+      setting: 'granted',
+      origin,
+    }));
+  check('Тест получил разрешение браузера на уведомления', granted);
+
+  check('Переключатель напоминаний срабатывает', await click('.switch'));
+  const timeReady = await waitFor("!!document.querySelector('.time-input')", 5000);
+  check('Список напоминаний с полями времени виден', timeReady);
+  if (timeReady) {
+    await setInputValue('.time-input', '05:45');
+    await sleep(500);
+    const timeSet = await evaluate("document.querySelector('.time-input')?.value ?? ''");
+    check('Время напоминания меняется', timeSet === '05:45', timeSet);
+  }
+
   await send('Page.reload');
   await sleep(1800);
   check('Тема сохраняется после перезагрузки', await evaluate("document.documentElement.dataset.theme === 'blue'"));
+
+  await click('.nav-item:nth-child(4)');
+  const reminderLoaded = await waitFor("!!document.querySelector('.time-input')", 5000);
+  const timeAfterReload = await evaluate("document.querySelector('.time-input')?.value ?? ''");
+  check('Время напоминания сохраняется после перезагрузки', reminderLoaded && timeAfterReload === '05:45', timeAfterReload);
+
+  if (reminderLoaded) {
+    await clickByText('Проверить');
+    const notified = await waitFor("(window.__monkNotify?.count ?? 0) >= 1", 6000);
+    const stats = await evaluate('JSON.stringify(window.__monkNotify ?? null)');
+    check('Проверочное уведомление уходит', notified, stats);
+    await shot('ux-10-reminders');
+
+    const now = new Date();
+    const nowTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    await setInputValue('.time-input', nowTime);
+    const scheduled = await waitFor("(window.__monkNotify?.count ?? 0) >= 2", 32000);
+    const after = await evaluate('JSON.stringify(window.__monkNotify ?? null)');
+    check('Планировщик сам срабатывает в назначенное время', scheduled, `${nowTime} → ${after}`);
+  }
 
   await click('.nav-item:nth-child(4)');
   await waitFor("!!document.querySelector('input[type=file]')", 4000);
@@ -289,6 +348,49 @@ try {
     check('Заметка обзора сохраняется', saved === 'тестовая заметка', saved);
     await shot('ux-09-review-saved');
   }
+
+  // --- еда в плане ---
+  await send('Page.navigate', { url: `${TARGET_URL}#plan` });
+  await send('Page.reload');
+  await sleep(1900);
+  const planFood = await waitFor("!!document.querySelector('.food-preset')", 6000);
+  check('В плане есть блок «Еда без проблем»', planFood);
+
+  if (planFood) {
+    const presetAdded = await click('.food-preset');
+    await sleep(600);
+    const chipCount = await evaluate("document.querySelectorAll('.food-chip').length");
+    check('Продукт добавляется в список', presetAdded && chipCount === 1, `чипов: ${chipCount}`);
+    await shot('ux-11-food');
+
+    await send('Page.reload');
+    await sleep(1900);
+    await waitFor("!!document.querySelector('.food-chip')", 6000);
+    const chipName = await evaluate(
+      "(document.querySelector('.food-chip')?.innerText ?? '').replace('×', '').trim()",
+    );
+    check('Список еды сохраняется после перезагрузки', chipName.length > 0, chipName);
+
+    await click('.food-chip');
+    await sleep(600);
+    const afterRemove = await evaluate("document.querySelectorAll('.food-chip').length");
+    check('Продукт удаляется нажатием', afterRemove === 0, `чипов: ${afterRemove}`);
+
+    const undoAppeared = await waitFor("!!document.querySelector('.toast-action')", 3000);
+    if (undoAppeared) {
+      await click('.toast-action');
+      await sleep(600);
+      const restored = await evaluate("document.querySelectorAll('.food-chip').length");
+      check('Удаление продукта можно отменить', restored === 1, `чипов: ${restored}`);
+    } else {
+      check('Удаление продукта можно отменить', false, 'нет плашки с отменой');
+    }
+
+    const pickClicked = await clickByText('Что съесть');
+    await sleep(400);
+    const pickText = await evaluate("document.querySelector('.food-pick')?.innerText ?? ''");
+    check('«Что съесть?» выбирает продукт из списка', pickClicked && pickText.length > 0, pickText);
+  }
 } catch (error) {
   check('Тест упал', false, String(error));
 } finally {
@@ -296,4 +398,6 @@ try {
 }
 
 const failed = results.filter((r) => !r.ok);
-console.log(JSON.stringify({ results, consoleErrors, failed: failed.length }, null, 2));
+console.log(
+  JSON.stringify({ total: results.length, failed: failed.length, results, consoleErrors }, null, 2),
+);
