@@ -24,9 +24,13 @@ if (
   (location.protocol === 'https:' || location.hostname === 'localhost')
 ) {
   window.addEventListener('load', () => {
+    // Была ли страница уже под управлением воркера. На первом визите — нет,
+    // и перезагружаться там не за чем: иначе свежая вкладка мигает и сбрасывает экран.
+    const hadController = Boolean(navigator.serviceWorker.controller);
     navigator.serviceWorker
       .register(`${import.meta.env.BASE_URL}sw.js`)
       .then((registration) => {
+        if (!hadController) return;
         registration.addEventListener('updatefound', () => {
           const installing = registration.installing;
           installing?.addEventListener('statechange', () => {

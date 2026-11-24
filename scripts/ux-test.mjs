@@ -176,7 +176,7 @@ try {
 
   await click('.onb-skip');
   check('Онбординг закрывается кнопкой «Пропустить»', await waitFor("!!document.querySelector('.nav')", 5000));
-  check('Видно неделю и фазу плана', await evaluate("!!document.querySelector('.phase-chip')"));
+  check('Видно неделю и фазу плана', await waitFor("!!document.querySelector('.phase-chip')", 5000));
   await shot('ux-02-today');
 
   const before = await evaluate(`document.querySelector('${counterSel}')?.innerText ?? ''`);
