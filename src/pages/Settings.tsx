@@ -33,11 +33,15 @@ export default function Settings() {
   const [pending, setPending] = useState<BackupData | null>(null);
   const [importError, setImportError] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
+  const timesEdited = useRef(false);
 
   useEffect(() => {
     getSetting<boolean>('notifications', false).then(setEnabled);
     getSetting<string>('startDate', '').then(setStart);
-    void loadReminders().then(setReminders);
+    void loadReminders().then((loaded) => {
+      // Не затираем время, если человек успел его поменять до ответа базы.
+      if (!timesEdited.current) setReminders(loaded);
+    });
     const current = document.documentElement.dataset.theme;
     if (isTheme(current)) {
       setTheme(current);
@@ -85,6 +89,7 @@ export default function Settings() {
   async function changeTime(id: string, value: string) {
     const parsed = parseTime(value);
     if (!parsed) return;
+    timesEdited.current = true;
     const next = reminders.map((item) =>
       item.id === id ? { ...item, hour: parsed.hour, minute: parsed.minute } : item,
     );
@@ -94,6 +99,7 @@ export default function Settings() {
   }
 
   async function resetTimes() {
+    timesEdited.current = true;
     setReminders(DEFAULT_REMINDERS);
     await saveReminders(DEFAULT_REMINDERS);
     setNote('Время вернулось к исходному.');

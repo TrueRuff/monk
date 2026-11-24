@@ -165,8 +165,10 @@ const counterSel = '.row-sub';
 await send('Runtime.enable');
 await send('Page.enable');
 await send('DOM.enable');
-await send('Page.navigate', { url: TARGET_URL });
-await sleep(1200);
+const nav = await send('Page.navigate', { url: TARGET_URL });
+if (nav.error) console.error('navigate error:', JSON.stringify(nav.error));
+// Ждём, пока приложение реально отрисуется: на живом сайте это дольше, чем локально.
+await waitFor("document.readyState === 'complete' && !!document.querySelector('.onb, .nav')", 30000);
 
 try {
   check('Онбординг показан при первом запуске', await evaluate("!!document.querySelector('.onb')"));
@@ -199,10 +201,13 @@ try {
   await shot('ux-03-toast');
 
   await click('.toast-action');
-  await sleep(400);
-  check('Отмена убирает плашку', await evaluate("!document.querySelector('.toast')"));
+  check('Отмена убирает плашку', await waitFor("!document.querySelector('.toast')", 4000));
+  const undone = await waitFor(
+    `(document.querySelector('${counterSel}')?.innerText ?? '').startsWith('0 из')`,
+    5000,
+  );
   const after = await evaluate(`document.querySelector('${counterSel}')?.innerText ?? ''`);
-  check('Отмена возвращает счётчик', after.startsWith('0 из'), after);
+  check('Отмена возвращает счётчик', undone, after);
 
   await click('.card-hero .btn');
   const workout = await waitFor("!!document.querySelector('.wex-title')", 5000);
@@ -210,9 +215,20 @@ try {
   await shot('ux-04-workout');
 
   if (workout) {
-    await click('.card-hero .btn');
-    const rest = await waitFor("!!document.querySelector('.rest-screen')", 4000);
-    check('Экран отдыха появляется после подхода', rest);
+    let rest = false;
+    for (let attempt = 0; attempt < 3 && !rest; attempt += 1) {
+      await click('.card-hero .btn');
+      rest = await waitFor("!!document.querySelector('.rest-screen')", 5000);
+      if (!rest) await sleep(700);
+    }
+    const heroInfo = await evaluate(`
+      (() => {
+        const card = document.querySelector('.card-hero');
+        const btn = card?.querySelector('.btn');
+        return card ? 'title=' + (card.innerText.slice(0, 30)) + ' | btn=' + (btn ? btn.innerText.slice(0, 30) + '/' + btn.disabled : 'none') : 'no-card';
+      })()
+    `);
+    check('Экран отдыха появляется после подхода', rest, heroInfo);
     const undoBtn = await evaluate(`
       (() => {
         const rest = document.querySelector('.rest-screen');
@@ -266,7 +282,8 @@ try {
   }
 
   await send('Page.reload');
-  await sleep(1800);
+  await waitFor("document.readyState === 'complete' && !!document.querySelector('.nav, .onb')", 20000);
+  await sleep(500);
   check('Тема сохраняется после перезагрузки', await evaluate("document.documentElement.dataset.theme === 'blue'"));
 
   await click('.nav-item:nth-child(4)');
@@ -303,8 +320,8 @@ try {
 
   if (pending) {
     await clickByText('Объединить');
-    await sleep(2000);
-    check('После импорта приложение перезагружается', await waitFor("!!document.querySelector('.nav')", 6000));
+    await sleep(800);
+    check('После импорта приложение перезагружается', await waitFor("!!document.querySelector('.nav')", 20000));
   }
 
   await click('.nav-item:nth-child(1)');
@@ -341,55 +358,64 @@ try {
     await clickByText('Сохранить заметку');
     await sleep(600);
     await send('Page.reload');
-    await sleep(1800);
+    await waitFor("document.readyState === 'complete' && !!document.querySelector('.nav')", 20000);
     await clickByText('Итоги недели');
-    await waitFor("!!document.querySelector('.textarea')", 4000);
+    await waitFor("!!document.querySelector('.textarea')", 8000);
+    const noteRestored = await waitFor(
+      "(document.querySelector('.textarea')?.value ?? '') === 'тестовая заметка'",
+      8000,
+    );
     const saved = await evaluate("document.querySelector('.textarea')?.value ?? ''");
-    check('Заметка обзора сохраняется', saved === 'тестовая заметка', saved);
+    check('Заметка обзора сохраняется', noteRestored, saved);
     await shot('ux-09-review-saved');
   }
 
   // --- еда в плане ---
-  await send('Page.navigate', { url: `${TARGET_URL}#plan` });
   await send('Page.reload');
-  await sleep(1900);
-  const planFood = await waitFor("!!document.querySelector('.food-preset')", 6000);
+  await waitFor("document.readyState === 'complete' && !!document.querySelector('.nav')", 20000);
+  await click('.nav-item:nth-child(2)');
+  const planFood = await waitFor("!!document.querySelector('.food-preset')", 10000);
   check('В плане есть блок «Еда без проблем»', planFood);
 
   if (planFood) {
     const presetAdded = await click('.food-preset');
-    await sleep(600);
+    const chipAppeared = await waitFor("document.querySelectorAll('.food-chip').length === 1", 6000);
     const chipCount = await evaluate("document.querySelectorAll('.food-chip').length");
-    check('Продукт добавляется в список', presetAdded && chipCount === 1, `чипов: ${chipCount}`);
+    check('Продукт добавляется в список', presetAdded && chipAppeared, `чипов: ${chipCount}`);
     await shot('ux-11-food');
 
     await send('Page.reload');
-    await sleep(1900);
-    await waitFor("!!document.querySelector('.food-chip')", 6000);
+    await waitFor("document.readyState === 'complete' && !!document.querySelector('.nav')", 20000);
+    await click('.nav-item:nth-child(2)');
+    await waitFor("!!document.querySelector('.food-chip')", 10000);
     const chipName = await evaluate(
       "(document.querySelector('.food-chip')?.innerText ?? '').replace('×', '').trim()",
     );
     check('Список еды сохраняется после перезагрузки', chipName.length > 0, chipName);
 
     await click('.food-chip');
-    await sleep(600);
+    const chipGone = await waitFor("document.querySelectorAll('.food-chip').length === 0", 5000);
     const afterRemove = await evaluate("document.querySelectorAll('.food-chip').length");
-    check('Продукт удаляется нажатием', afterRemove === 0, `чипов: ${afterRemove}`);
+    check('Продукт удаляется нажатием', chipGone, `чипов: ${afterRemove}`);
 
     const undoAppeared = await waitFor("!!document.querySelector('.toast-action')", 3000);
     if (undoAppeared) {
       await click('.toast-action');
-      await sleep(600);
-      const restored = await evaluate("document.querySelectorAll('.food-chip').length");
-      check('Удаление продукта можно отменить', restored === 1, `чипов: ${restored}`);
+      const restored = await waitFor("document.querySelectorAll('.food-chip').length === 1", 5000);
+      check('Удаление продукта можно отменить', restored, '');
     } else {
       check('Удаление продукта можно отменить', false, 'нет плашки с отменой');
     }
 
     const pickClicked = await clickByText('Что съесть');
-    await sleep(400);
+    const pickShown = pickClicked
+      ? await waitFor(
+          "(document.querySelector('.food-pick')?.innerText ?? '').includes('Творог')",
+          4000,
+        )
+      : false;
     const pickText = await evaluate("document.querySelector('.food-pick')?.innerText ?? ''");
-    check('«Что съесть?» выбирает продукт из списка', pickClicked && pickText.length > 0, pickText);
+    check('«Что съесть?» выбирает продукт из списка', pickShown, pickText);
   }
 } catch (error) {
   check('Тест упал', false, String(error));

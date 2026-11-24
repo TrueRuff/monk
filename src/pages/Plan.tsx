@@ -36,10 +36,16 @@ export default function Plan() {
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
     void getSetting<unknown>(FOODS_KEY, []).then((raw) => {
-      setFoods(normalizeFoods(raw));
+      if (cancelled) return;
+      // Если человек успел что-то добавить до ответа базы — его правку не затираем.
+      setFoods((current) => (current.length ? current : normalizeFoods(raw)));
       setLoaded(true);
     });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   async function persist(next: Food[]) {
