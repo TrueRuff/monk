@@ -34,12 +34,13 @@ export default function Settings() {
   const [importError, setImportError] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
   const timesEdited = useRef(false);
+  const themePicked = useRef(false);
 
   useEffect(() => {
-    getSetting<boolean>('notifications', false).then(setEnabled);
-    getSetting<string>('startDate', '').then(setStart);
+    // Не затираем то, что человек успел поменять до ответа базы.
+    getSetting<boolean>('notifications', false).then((value) => setEnabled((current) => current ?? value));
+    getSetting<string>('startDate', '').then((value) => setStart((current) => current || value));
     void loadReminders().then((loaded) => {
-      // Не затираем время, если человек успел его поменять до ответа базы.
       if (!timesEdited.current) setReminders(loaded);
     });
     const current = document.documentElement.dataset.theme;
@@ -48,11 +49,12 @@ export default function Settings() {
       return;
     }
     getSetting<string>('theme', 'gold').then((value) => {
-      if (isTheme(value)) setTheme(value);
+      if (!themePicked.current && isTheme(value)) setTheme(value);
     });
   }, []);
 
   async function pickTheme(next: Theme) {
+    themePicked.current = true;
     setTheme(next);
     applyTheme(next);
     await setSetting('theme', next);
